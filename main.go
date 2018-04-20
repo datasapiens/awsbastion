@@ -55,6 +55,42 @@ func retrieveCredentials() (*credentials.Credentials, error) {
 	return credentials.NewCredentials(&credentials.StaticProvider{val}), nil
 }
 
+func bastionAccountCreds(profile, assumedRoleARN string) (*credentials.Credentials, error) {
+	bastionCfg := aws.NewConfig()
+	bastionOpts := session.Options{
+		Config:                  *bastionCfg,
+		Profile:                 profile,
+		SharedConfigState:       session.SharedConfigEnable,
+		AssumeRoleTokenProvider: stscreds.StdinTokenProvider,
+	}
+
+	bastionSession, err := session.NewSessionWithOptions(bastionOpts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create new session for bastion account for profile %s: %v", profile, err)
+	}
+
+	creds := stscreds.NewCredentials(bastionSession, assumedRoleARN)
+	if err := storeCredentials(creds); err != nil {
+		return nil, fmt.Errorf("failed to store credentials for profile %s and role %s: %v", profile, assumedRoleARN, err)
+	}
+	return creds, nil
+}
+
+func createSession(cfg *aws.Config, creds *credentials.Credentials, profile, assumedRoleARN string, fallback bool) (*session.Session, error) {
+	sess, err := session.NewSession(cfg.WithCredentials(creds))
+	if err != nil {
+		if fallback {
+			creds, err = bastionAccountCreds(profile, assumedRoleARN)
+			if err != nil {
+				return nil, fmt.Errorf("couldn't create bastion account credentials: %v", err)
+			}
+			return createSession(cfg, creds, profile, assumedRoleARN, false)
+		}
+		return nil, fmt.Errorf("couldn't create session: %v", err)
+	}
+	return sess, nil
+}
+
 // Session creates session with empty config
 // Create AWS session with given profile (as it is in .aws config) and assumed role's ARN from main account
 func Session(profile, assumedRoleARN string) (*session.Session, error) {
@@ -64,29 +100,16 @@ func Session(profile, assumedRoleARN string) (*session.Session, error) {
 // SessionWithConfig does same as Session but with custom config
 func SessionWithConfig(profile, assumedRoleARN string, cfg *aws.Config) (*session.Session, error) {
 	creds, err := retrieveCredentials()
+	var credsFromFile bool
 	if err != nil {
-
-		bastionCfg := aws.NewConfig()
-		bastionOpts := session.Options{
-			Config:                  *bastionCfg,
-			Profile:                 profile,
-			SharedConfigState:       session.SharedConfigEnable,
-			AssumeRoleTokenProvider: stscreds.StdinTokenProvider,
-		}
-
-		bastionSession, err := session.NewSessionWithOptions(bastionOpts)
+		creds, err = bastionAccountCreds(profile, assumedRoleARN)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create new session for bastion account for profile %s: %v", profile, err)
+			return nil, fmt.Errorf("couldn't create bastion account credentials: %v", err)
 		}
-
-		creds = stscreds.NewCredentials(bastionSession, assumedRoleARN)
-		if err := storeCredentials(creds); err != nil {
-			return nil, fmt.Errorf("failed to store credentials for profile %s and role %s: %v", profile, assumedRoleARN, err)
-		}
+		credsFromFile = true
 	}
 
-	mainConfig := cfg.WithCredentials(creds)
-	mainSession, err := session.NewSession(mainConfig)
+	mainSession, err := createSession(cfg, creds, profile, assumedRoleARN, !credsFromFile)
 	if err != nil {
 		return nil, fmt.Errorf("couldn't create session for main account: %v", err)
 	}
