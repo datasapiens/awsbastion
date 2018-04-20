@@ -76,10 +76,10 @@ func bastionAccountCreds(profile, assumedRoleARN string) (*credentials.Credentia
 	return creds, nil
 }
 
-func createSession(cfg *aws.Config, creds *credentials.Credentials, profile, assumedRoleARN string, fallback bool) (*session.Session, error) {
+func createSession(cfg *aws.Config, creds *credentials.Credentials, profile, assumedRoleARN string, fallbackEnabled bool) (*session.Session, error) {
 	sess, err := session.NewSession(cfg.WithCredentials(creds))
 	if err != nil {
-		if fallback {
+		if fallbackEnabled {
 			creds, err = bastionAccountCreds(profile, assumedRoleARN)
 			if err != nil {
 				return nil, fmt.Errorf("couldn't create bastion account credentials: %v", err)
