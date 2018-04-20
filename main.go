@@ -10,6 +10,8 @@
 // trust the bastion account to manage who is allowed to assume them and under what conditions they can be assumed,
 // e.g. using temporary credentials with MFA.
 // source: https://engineering.coinbase.com/you-need-more-than-one-aws-account-aws-bastions-and-assume-role-23946c6dfde3
+//
+// Make sure you have bastion_credentials_session.json in .gitignore.
 package awsbastion
 
 import (
@@ -26,20 +28,6 @@ import (
 )
 
 const filename = "bastion_credentials_session.json"
-
-// Ping is function that verifies given session with aws servers e.g.
-//
-// func testConnection(region, bucket string) awsbastion.Ping {
-//	return func(sess *session.Session) error {
-//		svc := s3.New(sess, &aws.Config{Region: aws.String(region)})
-//		params := &s3.ListObjectsInput{
-//			Bucket: aws.String(bucket),
-//		}
-//		_, err := svc.ListObjects(params)
-//		return err
-//	}
-//}
-type Ping func(sess *session.Session) error
 
 func storeCredentials(creds *credentials.Credentials) error {
 	val, err := creds.Get()
@@ -93,17 +81,17 @@ func bastionAccountCreds(profile, assumedRoleARN string) (*credentials.Credentia
 
 // Session creates session with empty config
 // Create AWS session with given profile (as it is in .aws config) and assumed role's ARN from main account
-func Session(profile, assumedRoleARN string, ping Ping) (*session.Session, error) {
-	return SessionWithConfig(profile, assumedRoleARN, ping, aws.NewConfig())
+func Session(profile, assumedRoleARN string, pinger Pinger) (*session.Session, error) {
+	return SessionWithConfig(profile, assumedRoleARN, pinger, aws.NewConfig())
 }
 
 // SessionWithConfig does same as Session but with custom config
-func SessionWithConfig(profile, assumedRoleARN string, ping Ping, cfg *aws.Config) (*session.Session, error) {
-	return sessionWithConfigWrapper(profile, assumedRoleARN, ping, cfg, false)
+func SessionWithConfig(profile, assumedRoleARN string, pinger Pinger, cfg *aws.Config) (*session.Session, error) {
+	return sessionWithConfigWrapper(profile, assumedRoleARN, pinger, cfg, false)
 }
 
 // SessionWithConfig does same as Session but with custom config
-func sessionWithConfigWrapper(profile, assumedRoleARN string, ping Ping, cfg *aws.Config, rerun bool) (*session.Session, error) {
+func sessionWithConfigWrapper(profile, assumedRoleARN string, pinger Pinger, cfg *aws.Config, rerun bool) (*session.Session, error) {
 	creds, err := retrieveCredentials()
 	if err != nil {
 		creds, err = bastionAccountCreds(profile, assumedRoleARN)
@@ -117,14 +105,14 @@ func sessionWithConfigWrapper(profile, assumedRoleARN string, ping Ping, cfg *aw
 		return nil, fmt.Errorf("couldn't create session: %v", err)
 	}
 
-	if err := ping(mainSession); err != nil {
+	if err := pinger.Ping(mainSession); err != nil {
 		if rerun {
 			return nil, fmt.Errorf("failed to ping aws servers with created session: %v")
 		}
 		if err := purge(); err != nil {
 			return nil, fmt.Errorf("couldn't purge the main session: %v", err)
 		}
-		mainSession, err = sessionWithConfigWrapper(profile, assumedRoleARN, ping, cfg, true)
+		mainSession, err = sessionWithConfigWrapper(profile, assumedRoleARN, pinger, cfg, true)
 		if err != nil {
 			return nil, fmt.Errorf("couldn't create main account session after first ping failed")
 		}
