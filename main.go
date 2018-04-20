@@ -17,6 +17,8 @@ import (
 	"fmt"
 	"io/ioutil"
 
+	"os"
+
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
@@ -24,6 +26,20 @@ import (
 )
 
 const filename = "bastion_credentials_session.json"
+
+// Ping is function that verifies given session with aws servers e.g.
+//
+// func testConnection(region, bucket string) awsbastion.Ping {
+//	return func(sess *session.Session) error {
+//		svc := s3.New(sess, &aws.Config{Region: aws.String(region)})
+//		params := &s3.ListObjectsInput{
+//			Bucket: aws.String(bucket),
+//		}
+//		_, err := svc.ListObjects(params)
+//		return err
+//	}
+//}
+type Ping func(sess *session.Session) error
 
 func storeCredentials(creds *credentials.Credentials) error {
 	val, err := creds.Get()
@@ -41,7 +57,6 @@ func storeCredentials(creds *credentials.Credentials) error {
 }
 
 func retrieveCredentials() (*credentials.Credentials, error) {
-
 	f, err := ioutil.ReadFile(filename)
 	if err != nil {
 		return nil, fmt.Errorf("couldn't read file %s: %v", filename, err)
@@ -76,42 +91,51 @@ func bastionAccountCreds(profile, assumedRoleARN string) (*credentials.Credentia
 	return creds, nil
 }
 
-func createSession(cfg *aws.Config, creds *credentials.Credentials, profile, assumedRoleARN string, fallbackEnabled bool) (*session.Session, error) {
-	sess, err := session.NewSession(cfg.WithCredentials(creds))
-	if err != nil {
-		if fallbackEnabled {
-			creds, err = bastionAccountCreds(profile, assumedRoleARN)
-			if err != nil {
-				return nil, fmt.Errorf("couldn't create bastion account credentials: %v", err)
-			}
-			return createSession(cfg, creds, profile, assumedRoleARN, false)
-		}
-		return nil, fmt.Errorf("couldn't create session: %v", err)
-	}
-	return sess, nil
-}
-
 // Session creates session with empty config
 // Create AWS session with given profile (as it is in .aws config) and assumed role's ARN from main account
-func Session(profile, assumedRoleARN string) (*session.Session, error) {
-	return SessionWithConfig(profile, assumedRoleARN, aws.NewConfig())
+func Session(profile, assumedRoleARN string, ping Ping) (*session.Session, error) {
+	return SessionWithConfig(profile, assumedRoleARN, ping, aws.NewConfig())
 }
 
 // SessionWithConfig does same as Session but with custom config
-func SessionWithConfig(profile, assumedRoleARN string, cfg *aws.Config) (*session.Session, error) {
+func SessionWithConfig(profile, assumedRoleARN string, ping Ping, cfg *aws.Config) (*session.Session, error) {
+	return sessionWithConfigWrapper(profile, assumedRoleARN, ping, cfg, false)
+}
+
+// SessionWithConfig does same as Session but with custom config
+func sessionWithConfigWrapper(profile, assumedRoleARN string, ping Ping, cfg *aws.Config, rerun bool) (*session.Session, error) {
 	creds, err := retrieveCredentials()
-	var credsFromFile bool
 	if err != nil {
 		creds, err = bastionAccountCreds(profile, assumedRoleARN)
 		if err != nil {
 			return nil, fmt.Errorf("couldn't create bastion account credentials: %v", err)
 		}
-		credsFromFile = true
 	}
 
-	mainSession, err := createSession(cfg, creds, profile, assumedRoleARN, !credsFromFile)
+	mainSession, err := session.NewSession(cfg.WithCredentials(creds))
 	if err != nil {
-		return nil, fmt.Errorf("couldn't create session for main account: %v", err)
+		return nil, fmt.Errorf("couldn't create session: %v", err)
 	}
+
+	if err := ping(mainSession); err != nil {
+		if rerun {
+			return nil, fmt.Errorf("failed to ping aws servers with created session: %v")
+		}
+		if err := purge(); err != nil {
+			return nil, fmt.Errorf("couldn't purge the main session: %v", err)
+		}
+		mainSession, err = sessionWithConfigWrapper(profile, assumedRoleARN, ping, cfg, true)
+		if err != nil {
+			return nil, fmt.Errorf("couldn't create main account session after first ping failed")
+		}
+	}
+
 	return mainSession, nil
+}
+
+func purge() error {
+	if err := os.Remove(filename); err != nil {
+		return fmt.Errorf("couldn't delete file %s: %v", filename, err)
+	}
+	return nil
 }
