@@ -1,3 +1,7 @@
+[![Build Status](https://travis-ci.org/datasapiens/awsbastion.svg?branch=master)](https://travis-ci.org/datasapiens/awsbastion)
+[![GoDoc](https://godoc.org/github.com/datasapiens/awsbastion?status.svg)](https://godoc.org/github.com/datasapiens/awsbastion)
+
+
 # awsbastion
 Package awsbastion is solution for using golang AWS SDK for bastion account user's to assume main account role
 where everything is secured with MFA.
