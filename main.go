@@ -115,7 +115,7 @@ func sessionWithConfigWrapper(profile, assumedRoleARN string, pinger Pinger, cfg
 
 	if err := pinger.Ping(mainSession); err != nil {
 		if rerun {
-			return nil, fmt.Errorf("failed to ping aws servers with created session: %v")
+			return nil, fmt.Errorf("failed to ping aws servers with created session: %v", err)
 		}
 		if err := purge(); err != nil {
 			return nil, fmt.Errorf("couldn't purge the main session: %v", err)
