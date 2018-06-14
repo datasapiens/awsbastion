@@ -8,7 +8,7 @@ import (
 
 // Pinger provides interface for structs that are able to verify given session
 type Pinger interface {
-	Ping(sess *session.Session) error
+	Ping(*session.Session) error
 }
 
 type S3ListObjectsPinger struct {

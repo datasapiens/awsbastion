@@ -10,8 +10,6 @@
 // trust the bastion account to manage who is allowed to assume them and under what conditions they can be assumed,
 // e.g. using temporary credentials with MFA.
 // source: https://engineering.coinbase.com/you-need-more-than-one-aws-account-aws-bastions-and-assume-role-23946c6dfde3
-//
-// Make sure you have bastion_credentials_session.json in .gitignore.
 package awsbastion
 
 import (
@@ -21,13 +19,20 @@ import (
 
 	"os"
 
+	"path/filepath"
+
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
 	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/mitchellh/go-homedir"
 )
 
-const filename = "bastion_credentials_session.json"
+func credentialsFile() string {
+	const filename = ".aws_bastion_credentials"
+	dir, _ := homedir.Dir()
+	return filepath.Join(dir, filename)
+}
 
 func storeCredentials(creds *credentials.Credentials) error {
 	val, err := creds.Get()
@@ -38,16 +43,19 @@ func storeCredentials(creds *credentials.Credentials) error {
 	if err != nil {
 		return fmt.Errorf("couldn't marshal credentials value: %v", err)
 	}
-	if err := ioutil.WriteFile(filename, b, 0666); err != nil {
+
+	credsFilePath := credentialsFile()
+	if err := ioutil.WriteFile(credsFilePath, b, 0666); err != nil {
 		return fmt.Errorf("couldn't write the file: %v", err)
 	}
 	return nil
 }
 
 func retrieveCredentials() (*credentials.Credentials, error) {
-	f, err := ioutil.ReadFile(filename)
+	credsFilePath := credentialsFile()
+	f, err := ioutil.ReadFile(credsFilePath)
 	if err != nil {
-		return nil, fmt.Errorf("couldn't read file %s: %v", filename, err)
+		return nil, fmt.Errorf("couldn't read file %s: %v", credsFilePath, err)
 	}
 
 	var val credentials.Value
@@ -122,8 +130,9 @@ func sessionWithConfigWrapper(profile, assumedRoleARN string, pinger Pinger, cfg
 }
 
 func purge() error {
-	if err := os.Remove(filename); err != nil {
-		return fmt.Errorf("couldn't delete file %s: %v", filename, err)
+	credsFilePath := credentialsFile()
+	if err := os.Remove(credsFilePath); err != nil {
+		return fmt.Errorf("couldn't delete file %s: %v", credsFilePath, err)
 	}
 	return nil
 }
